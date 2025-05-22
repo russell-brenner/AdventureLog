@@ -1,13 +1,14 @@
 from django.db.models import Q
 from django.db.models.functions import Lower
 from django.db import transaction
-from rest_framework import viewsets
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from adventures.models import Collection, Adventure, Transportation, Note
+from adventures.models import Collection, Adventure, Transportation, Note, Category, Visit
 from adventures.permissions import CollectionShared
 from adventures.serializers import CollectionSerializer
 from users.models import CustomUser as User
+from datetime import datetime
 from adventures.utils import pagination
 
 class CollectionViewSet(viewsets.ModelViewSet):
@@ -222,3 +223,51 @@ class CollectionViewSet(viewsets.ModelViewSet):
             return paginator.get_paginated_response(serializer.data)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['post'], url_path='import')
+    @transaction.atomic
+    def import_collection(self, request):
+        if not request.user.is_authenticated:
+            return Response({"error": "User is not authenticated"}, status=status.HTTP_4_0_FORBIDDEN)
+
+        try:
+            data = request.data
+            activities = data.get('activities', [])
+
+            if not activities:
+                return Response({"error": "No activities provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+            collection_name = f"Imported Collection - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            collection = Collection.objects.create(user_id=request.user, name=collection_name)
+
+            for activity_data in activities:
+                category_name = activity_data.get('category')
+                category = None
+                if category_name:
+                    category, _ = Category.objects.get_or_create(user_id=request.user, name=category_name)
+
+                adventure = Adventure.objects.create(
+                    user_id=request.user,
+                    collection=collection,
+                    name=activity_data.get('name'),
+                    description=activity_data.get('description'),
+                    location=activity_data.get('location'),
+                    category=category,
+                )
+
+                date_str = activity_data.get('date')
+                if date_str:
+                    # Assuming date is in YYYY-MM-DD format
+                    activity_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    Visit.objects.create(
+                        adventure=adventure,
+                        start_date=activity_date,
+                        end_date=activity_date,
+                        user_id=request.user,
+                    )
+            
+            serializer = CollectionSerializer(collection, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

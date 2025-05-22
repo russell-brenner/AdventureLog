@@ -4,9 +4,11 @@
 	import CollectionCard from '$lib/components/CollectionCard.svelte';
 	import CollectionLink from '$lib/components/CollectionLink.svelte';
 	import CollectionModal from '$lib/components/CollectionModal.svelte';
+	import CollectionImportModal from '$lib/components/CollectionImportModal.svelte'; // Added Import
 	import NotFound from '$lib/components/NotFound.svelte';
 	import type { Collection } from '$lib/types';
 	import { t } from 'svelte-i18n';
+	import { toast } from '$lib/utils/toasts'; // Added Toast
 
 	import Plus from '~icons/mdi/plus';
 
@@ -19,6 +21,7 @@
 
 	let resultsPerPage: number = 25;
 	let isShowingCollectionModal: boolean = false;
+	let isShowingImportModal: boolean = false; // Added state for import modal
 
 	let next: string | null = data.props.next || null;
 	let previous: string | null = data.props.previous || null;
@@ -120,6 +123,40 @@
 	function toggleSidebar() {
 		sidebarOpen = !sidebarOpen;
 	}
+
+	async function handleImportData(event: CustomEvent<any>) {
+		const importData = event.detail;
+		if (!importData || !importData.activities) {
+			toast.pushError('Import data is missing or invalid.');
+			return;
+		}
+
+		try {
+			const response = await fetch('/api/collections/import/', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+					// Assuming CSRF cookie is handled automatically by the browser for same-origin requests
+				},
+				body: JSON.stringify(importData)
+			});
+
+			if (response.status === 201) {
+				const newCollection = await response.json();
+				collections = [newCollection, ...collections]; // Add to the beginning of the list
+				isShowingImportModal = false;
+				toast.pushSuccess('Collection imported successfully!');
+			} else {
+				const errorData = await response.json();
+				toast.pushError(
+					`Failed to import collection: ${errorData.error || response.statusText}`
+				);
+			}
+		} catch (error: any) {
+			console.error('Import error:', error);
+			toast.pushError(`An unexpected error occurred: ${error.message}`);
+		}
+	}
 </script>
 
 {#if isShowingCollectionModal}
@@ -130,6 +167,11 @@
 		on:save={saveOrCreate}
 	/>
 {/if}
+
+{#if isShowingImportModal}
+	<CollectionImportModal on:close={() => (isShowingImportModal = false)} on:import={handleImportData} />
+{/if}
+
 <div class="fixed bottom-4 right-4 z-[999]">
 	<div class="flex flex-row items-center justify-center gap-4">
 		<div class="dropdown dropdown-top dropdown-end">
@@ -139,7 +181,7 @@
 			<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
 			<ul
 				tabindex="0"
-				class="dropdown-content z-[1] menu p-4 shadow bg-base-300 text-base-content rounded-box w-52 gap-4"
+				class="dropdown-content z-[1] menu p-4 shadow bg-base-300 text-base-content rounded-box w-56 gap-4" 
 			>
 				<p class="text-center font-bold text-lg">{$t(`adventures.create_new`)}</p>
 				<button
@@ -150,8 +192,11 @@
 						newType = 'visited';
 					}}
 				>
-					{$t(`adventures.collection`)}</button
-				>
+					{$t(`adventures.collection`)}
+				</button>
+				<button class="btn btn-secondary" on:click={() => (isShowingImportModal = true)}>
+					{$t(`adventures.import_collection`)}
+				</button>
 			</ul>
 		</div>
 	</div>
