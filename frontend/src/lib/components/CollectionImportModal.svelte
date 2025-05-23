@@ -1,5 +1,6 @@
-<script>
+<script lang="ts">
   import { createEventDispatcher } from 'svelte';
+	import { onMount } from 'svelte';
 
   const dispatch = createEventDispatcher();
 
@@ -8,7 +9,30 @@
   let errorMessage = '';
   let selectedFile = null;
 
+  let modal: HTMLDialogElement;
+
+	console.log('Entering CollectionImportModal');
+
+	onMount(async () => {
+  	console.log('Entering onMount');
+		modal = document.getElementById('my_modal_1') as HTMLDialogElement;
+		if (modal) {
+			modal.showModal();
+
+      showModal = true;
+      jsonData = '';
+      errorMessage = '';
+      selectedFile = null;
+      // Reset file input if it exists
+      const fileInput = document.getElementById('jsonFile');
+      if (fileInput) {
+        fileInput.value = '';
+      }
+		}
+	});
+
   export function openModal() {
+  	console.log('Entering openModal');
     showModal = true;
     jsonData = '';
     errorMessage = '';
@@ -63,7 +87,10 @@
   }
 </script>
 
-{#if showModal}
+<!-- {#if showModal} -->
+<dialog id="my_modal_1" class="modal">
+	<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+	<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
   <div
     class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 transition-opacity duration-300 ease-in-out"
     class:opacity-100={showModal}
@@ -131,7 +158,8 @@
       </div>
     </div>
   </div>
-{/if}
+<!-- {/if} -->
+</dialog>
 
 <style>
   /* Ensure the modal backdrop is correctly layered */

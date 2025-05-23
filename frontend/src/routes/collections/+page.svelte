@@ -8,7 +8,7 @@
 	import NotFound from '$lib/components/NotFound.svelte';
 	import type { Collection } from '$lib/types';
 	import { t } from 'svelte-i18n';
-	import { toast } from '$lib/utils/toasts'; // Added Toast
+	import { toasts } from '$lib/toasts'; // Added Toast
 
 	import Plus from '~icons/mdi/plus';
 
@@ -125,9 +125,10 @@
 	}
 
 	async function handleImportData(event: CustomEvent<any>) {
+		console.log('Entering handleImportData');
 		const importData = event.detail;
 		if (!importData || !importData.activities) {
-			toast.pushError('Import data is missing or invalid.');
+			toasts.pushError('Import data is missing or invalid.');
 			return;
 		}
 
@@ -145,16 +146,16 @@
 				const newCollection = await response.json();
 				collections = [newCollection, ...collections]; // Add to the beginning of the list
 				isShowingImportModal = false;
-				toast.pushSuccess('Collection imported successfully!');
+				toasts.pushSuccess('Collection imported successfully!');
 			} else {
 				const errorData = await response.json();
-				toast.pushError(
+				toasts.pushError(
 					`Failed to import collection: ${errorData.error || response.statusText}`
 				);
 			}
 		} catch (error: any) {
 			console.error('Import error:', error);
-			toast.pushError(`An unexpected error occurred: ${error.message}`);
+			toasts.pushError(`An unexpected error occurred: ${error.message}`);
 		}
 	}
 </script>
@@ -169,7 +170,10 @@
 {/if}
 
 {#if isShowingImportModal}
-	<CollectionImportModal on:close={() => (isShowingImportModal = false)} on:import={handleImportData} />
+	<CollectionImportModal
+		on:close={() => (isShowingImportModal = false)}
+		on:import={handleImportData}
+	/>
 {/if}
 
 <div class="fixed bottom-4 right-4 z-[999]">
@@ -194,7 +198,10 @@
 				>
 					{$t(`adventures.collection`)}
 				</button>
-				<button class="btn btn-secondary" on:click={() => (isShowingImportModal = true)}>
+				<button
+					class="btn btn-secondary"
+					on:click={() => (isShowingImportModal = true)}
+				>
 					{$t(`adventures.import_collection`)}
 				</button>
 			</ul>
