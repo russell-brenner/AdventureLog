@@ -2,6 +2,3 @@
 .venv/
 .vscode/settings.json
 .pnpm-store/
-
-.lsp/
-.clj-kondo/

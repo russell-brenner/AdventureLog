@@ -8,7 +8,7 @@
 	import NotFound from '$lib/components/NotFound.svelte';
 	import type { Collection } from '$lib/types';
 	import { t } from 'svelte-i18n';
-	import { toasts } from '$lib/toasts'; // Added Toast
+	import { toast } from '$lib/utils/toasts'; // Added Toast
 
 	import Plus from '~icons/mdi/plus';
 
@@ -124,38 +124,53 @@
 		sidebarOpen = !sidebarOpen;
 	}
 
-	async function handleImportData(event: CustomEvent<any>) {
-		console.log('Entering handleImportData');
-		const importData = event.detail;
-		if (!importData || !importData.activities) {
-			toasts.pushError('Import data is missing or invalid.');
+	async function handleImportData(event: CustomEvent<{ type: 'json' | 'csv'; data: any }>) {
+		const { type: importType, data: importPayload } = event.detail;
+
+		let headers: HeadersInit = {};
+		let body: BodyInit | null = null;
+
+		if (importType === 'json') {
+			if (!importPayload || typeof importPayload !== 'object' || !importPayload.activities) {
+				toast.pushError('Invalid JSON data structure for import.');
+				return;
+			}
+			headers['Content-Type'] = 'application/json';
+			body = JSON.stringify(importPayload);
+		} else if (importType === 'csv') {
+			if (typeof importPayload !== 'string' || !importPayload.trim()) {
+				toast.pushError('CSV data is empty or invalid.');
+				return;
+			}
+			headers['Content-Type'] = 'text/csv';
+			body = importPayload;
+		} else {
+			toast.pushError('Invalid import type specified.');
 			return;
 		}
 
 		try {
 			const response = await fetch('/api/collections/import/', {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json'
-					// Assuming CSRF cookie is handled automatically by the browser for same-origin requests
-				},
-				body: JSON.stringify(importData)
+				headers: headers,
+				body: body
+				// Assuming CSRF cookie is handled automatically by the browser for same-origin requests
 			});
 
 			if (response.status === 201) {
 				const newCollection = await response.json();
 				collections = [newCollection, ...collections]; // Add to the beginning of the list
 				isShowingImportModal = false;
-				toasts.pushSuccess('Collection imported successfully!');
+				toast.pushSuccess('Collection imported successfully!');
 			} else {
 				const errorData = await response.json();
-				toasts.pushError(
+				toast.pushError(
 					`Failed to import collection: ${errorData.error || response.statusText}`
 				);
 			}
 		} catch (error: any) {
 			console.error('Import error:', error);
-			toasts.pushError(`An unexpected error occurred: ${error.message}`);
+			toast.pushError(`An unexpected error occurred: ${error.message}`);
 		}
 	}
 </script>
@@ -170,10 +185,7 @@
 {/if}
 
 {#if isShowingImportModal}
-	<CollectionImportModal
-		on:close={() => (isShowingImportModal = false)}
-		on:import={handleImportData}
-	/>
+	<CollectionImportModal on:close={() => (isShowingImportModal = false)} on:import={handleImportData} />
 {/if}
 
 <div class="fixed bottom-4 right-4 z-[999]">
@@ -198,10 +210,7 @@
 				>
 					{$t(`adventures.collection`)}
 				</button>
-				<button
-					class="btn btn-secondary"
-					on:click={() => (isShowingImportModal = true)}
-				>
+				<button class="btn btn-secondary" on:click={() => (isShowingImportModal = true)}>
 					{$t(`adventures.import_collection`)}
 				</button>
 			</ul>

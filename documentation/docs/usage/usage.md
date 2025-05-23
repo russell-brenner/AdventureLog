@@ -31,3 +31,87 @@ Welcome to AdventureLog! This guide will help you get started with AdventureLog 
 ## Tutorial Video
 
 <iframe width="560" height="315" src="https://www.youtube.com/embed/4Y2LvxG3xn4" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
+## Importing Collections
+
+AdventureLog allows you to quickly create a new collection and populate it with activities by importing data from a structured file. This is useful for migrating data from other services or for bulk-adding activities.
+
+### Accessing the Import Feature
+
+1.  Navigate to the "Collections" page from the main menu.
+2.  Click the circular "+" (plus) button, usually located at the bottom right of the page.
+3.  From the dropdown menu that appears, select "Import Collection".
+4.  An "Import Collection" modal dialog will appear.
+
+This modal allows you to either upload a JSON or CSV file, or directly paste JSON data into a textarea.
+
+### Using JSON
+
+When importing via JSON, the data should be an array of activity objects. Each object represents an activity and can have the following fields:
+
+*   `date` (string, **required**): The date of the activity in `YYYY-MM-DD` format.
+*   `name` (string, **required**): The name or title of the activity.
+*   `location` (string, optional): The geographical location of the activity (e.g., "Paris, France", "123 Main St, Anytown").
+*   `description` (string, optional): A more detailed description of the activity.
+*   `category` (string, optional): The name of the category for this activity (e.g., "Dining", "Hiking", "Museum"). If a category with this name (case-insensitive) doesn't already exist for you, it will be created automatically.
+
+**Example JSON Data:**
+
+```json
+[
+  {
+    "date": "2024-03-15",
+    "name": "Dinner at The Italian Place",
+    "location": "123 Main St, Anytown",
+    "description": "Reservation at 7 PM.",
+    "category": "Dining"
+  },
+  {
+    "date": "2024-03-16",
+    "name": "Hike to Summit Peak",
+    "category": "Hiking"
+  },
+  {
+    "date": "2024-03-17",
+    "name": "Visit Art Gallery",
+    "location": "Downtown Art Center",
+    "description": "Special exhibition on impressionism."
+  }
+]
+```
+
+You can paste this JSON data directly into the textarea in the import modal or save it as a `.json` file and upload it.
+
+### Using CSV
+
+You can also import activities by uploading a CSV (Comma Separated Values) file. The first row of the CSV file **must** be a header row defining the columns.
+
+**Headers (case-insensitive):**
+
+*   `date` (**required**): The date of the activity in `YYYY-MM-DD` format.
+*   `name` (**required**): The name or title of the activity.
+*   `location` (optional): The geographical location.
+*   `description` (optional): A more detailed description.
+*   `category` (optional): The name of the category. If a category with this name (case-insensitive) doesn't already exist for you, it will be created.
+
+**Example CSV Data:**
+
+```csv
+date,name,location,description,category
+2024-03-15,Dinner at The Italian Place,"123 Main St, Anytown","Reservation at 7 PM.",Dining
+2024-03-16,Hike to Summit Peak,,,Hiking
+2024-03-17,Museum Visit,"City Art Museum",,Culture
+2024-03-18,Morning Coffee,Local Cafe,Quick stop before work,Food
+```
+
+**CSV Import Notes:**
+
+*   **Missing Optional Data:** If optional fields (like `location`, `description`, `category`) are left empty in a row (e.g., `,,,` in the "Hike to Summit Peak" example), they will simply be skipped for that activity, and no error will occur.
+*   **Skipped Rows:** If a row in the CSV is missing data for required fields (`date` or `name`), that specific row will be skipped during the import process, and the system will attempt to import the remaining valid rows.
+*   **File Encoding:** Ensure your CSV file is UTF-8 encoded.
+
+### Import Process and Error Handling
+
+*   Upon successful import, a new collection will be created. The collection will be named automatically (e.g., "Imported Collection - YYYY-MM-DD HH:MM:SS").
+*   All successfully processed activities from your JSON or CSV data will be added to this new collection.
+*   If there are issues with the file format (e.g., invalid JSON, malformed CSV), or if data within the file is incorrect (e.g., an invalid date format for an activity), the system will display an error message. For CSV files with row-specific errors (like an invalid date format in one row), the entire import for that file may be halted if the error prevents further processing (e.g., a critical date parsing error).

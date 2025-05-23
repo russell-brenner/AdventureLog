@@ -10,6 +10,8 @@ from adventures.serializers import CollectionSerializer
 from users.models import CustomUser as User
 from datetime import datetime
 from adventures.utils import pagination
+import csv # Added
+import io # Added
 
 class CollectionViewSet(viewsets.ModelViewSet):
     serializer_class = CollectionSerializer
@@ -224,50 +226,116 @@ class CollectionViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+    def _create_activity_from_data(self, user, activity_data, collection_obj):
+        """
+        Helper method to create Adventure, Category, and Visit objects from a dictionary.
+        """
+        category_name = activity_data.get('category')
+        category = None
+        if category_name: # Ensure category_name is not empty or None
+            category, _ = Category.objects.get_or_create(user_id=user, name__iexact=category_name, defaults={'name': category_name})
+
+
+        adventure = Adventure.objects.create(
+            user_id=user,
+            collection=collection_obj,
+            name=activity_data.get('name'),
+            description=activity_data.get('description'),
+            location=activity_data.get('location'),
+            category=category,
+        )
+
+        date_str = activity_data.get('date')
+        if date_str: # Ensure date_str is not empty or None
+            # Assuming date is in YYYY-MM-DD format
+            activity_date = datetime.strptime(str(date_str).strip(), '%Y-%m-%d').date()
+            Visit.objects.create(
+                adventure=adventure,
+                start_date=activity_date,
+                end_date=activity_date,
+                user_id=user,
+            )
+        return adventure
+
     @action(detail=False, methods=['post'], url_path='import')
     @transaction.atomic
     def import_collection(self, request):
         if not request.user.is_authenticated:
-            return Response({"error": "User is not authenticated"}, status=status.HTTP_4_0_FORBIDDEN)
+            return Response({"error": "User is not authenticated"}, status=status.HTTP_403_FORBIDDEN)
+
+        activities = []
+        content_type = request.content_type.split(';')[0].strip().lower() # Get main content type
 
         try:
-            data = request.data
-            activities = data.get('activities', [])
+            if content_type == 'application/json':
+                data = request.data
+                activities_data = data.get('activities', [])
+                # For JSON, activity_data is already a list of dicts
+                for activity_item in activities_data:
+                    # Ensure all expected keys are at least gettable with .get()
+                    activities.append({
+                        'name': activity_item.get('name'),
+                        'description': activity_item.get('description'),
+                        'location': activity_item.get('location'),
+                        'date': activity_item.get('date'),
+                        'category': activity_item.get('category'),
+                    })
+
+            elif content_type == 'text/csv' or content_type == 'application/csv':
+                try:
+                    csv_text = request.body.decode('utf-8')
+                    csv_file = io.StringIO(csv_text)
+                    reader = csv.DictReader(csv_file)
+                    # Normalize fieldnames to lowercase for consistent access
+                    reader.fieldnames = [name.strip().lower() for name in reader.fieldnames if name]
+                    
+                    required_headers = {'date', 'name'}
+                    if not required_headers.issubset(set(reader.fieldnames or [])):
+                        missing = required_headers - set(reader.fieldnames or [])
+                        return Response({"error": f"CSV is missing required headers: {', '.join(missing)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+                    for row in reader:
+                        # Ensure all expected keys are accessed safely
+                        activities.append({
+                            'name': row.get('name'),
+                            'description': row.get('description'),
+                            'location': row.get('location'),
+                            'date': row.get('date'),
+                            'category': row.get('category'),
+                        })
+                except csv.Error as e:
+                    return Response({"error": f"CSV parsing error: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+                except UnicodeDecodeError:
+                    return Response({"error": "Invalid CSV file encoding. Please use UTF-8."}, status=status.HTTP_400_BAD_REQUEST)
+
+            else:
+                return Response({"error": "Unsupported media type. Please use 'application/json' or 'text/csv'."}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
 
             if not activities:
-                return Response({"error": "No activities provided"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "No activities provided or data is empty."}, status=status.HTTP_400_BAD_REQUEST)
 
             collection_name = f"Imported Collection - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             collection = Collection.objects.create(user_id=request.user, name=collection_name)
 
             for activity_data in activities:
-                category_name = activity_data.get('category')
-                category = None
-                if category_name:
-                    category, _ = Category.objects.get_or_create(user_id=request.user, name=category_name)
+                # Basic validation for required fields from CSV
+                if content_type in ['text/csv', 'application/csv']:
+                    if not activity_data.get('name') or not activity_data.get('date'):
+                        # Log this or add to a list of errors to return, for now skipping
+                        # Or, decide to fail the whole import:
+                        # return Response({"error": f"Missing required field 'name' or 'date' in CSV row: {activity_data}"}, status=status.HTTP_400_BAD_REQUEST)
+                        continue # Skip row if critical data is missing
 
-                adventure = Adventure.objects.create(
-                    user_id=request.user,
-                    collection=collection,
-                    name=activity_data.get('name'),
-                    description=activity_data.get('description'),
-                    location=activity_data.get('location'),
-                    category=category,
-                )
-
-                date_str = activity_data.get('date')
-                if date_str:
-                    # Assuming date is in YYYY-MM-DD format
-                    activity_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    Visit.objects.create(
-                        adventure=adventure,
-                        start_date=activity_date,
-                        end_date=activity_date,
-                        user_id=request.user,
-                    )
+                self._create_activity_from_data(request.user, activity_data, collection)
             
+            # Refresh collection to get related adventures for serialization
+            collection.refresh_from_db()
             serializer = CollectionSerializer(collection, context={'request': request})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+        except ValueError as e: # Catches date parsing errors specifically from _create_activity_from_data
+            return Response({"error": f"Data validation error: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Log the exception e for debugging
+            print(f"Unhandled exception in import_collection: {e}") # Basic logging
+            return Response({"error": "An unexpected error occurred during import."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

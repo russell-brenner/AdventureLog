@@ -277,3 +277,217 @@ class CollectionImportTests(APITestCase):
         visit = Visit.objects.first()
         self.assertEqual(visit.start_date, date(2023, 3, 1))
         self.assertEqual(visit.user_id, self.user)
+
+
+    # --- CSV Import Tests ---
+
+    def test_successful_csv_import(self):
+        """
+        Test successful import of a collection via CSV.
+        """
+        csv_data = (
+            "date,name,location,description,category\n"
+            "2023-04-01,CSV Adventure 1,CSV Location 1,Desc for CSV 1,CSV Cat1\n"
+            "2023-04-02,CSV Adventure 2,CSV Location 2,Desc for CSV 2,CSV Cat2\n"
+            "2023-04-03,CSV Adventure 3,,,,\n" # Optional fields empty
+        )
+        response = self.client.post(
+            self.import_url, data=csv_data, content_type="text/csv"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+
+        self.assertEqual(Collection.objects.count(), 1)
+        collection = Collection.objects.first()
+        self.assertEqual(collection.user_id, self.user)
+        self.assertTrue(collection.name.startswith("Imported Collection - "))
+
+        self.assertEqual(Adventure.objects.count(), 3)
+        adventures = Adventure.objects.filter(collection=collection).order_by('name')
+        self.assertEqual(adventures[0].name, "CSV Adventure 1")
+        self.assertEqual(adventures[1].name, "CSV Adventure 2")
+        self.assertEqual(adventures[2].name, "CSV Adventure 3")
+
+        self.assertEqual(adventures[0].location, "CSV Location 1")
+        self.assertEqual(adventures[0].description, "Desc for CSV 1")
+        self.assertIsNotNone(adventures[0].category)
+        self.assertEqual(adventures[0].category.name, "CSV Cat1")
+        
+        self.assertIsNone(adventures[2].location) # Handled by get which defaults to None
+        self.assertIsNone(adventures[2].description)
+        self.assertIsNone(adventures[2].category)
+
+
+        self.assertEqual(Visit.objects.count(), 3)
+        visit1 = Visit.objects.get(adventure=adventures[0])
+        self.assertEqual(visit1.start_date, date(2023, 4, 1))
+
+        response_data = response.json()
+        self.assertEqual(response_data["name"], collection.name)
+        # Ensure adventures are part of the response if serializer includes them
+        self.assertTrue("adventures" in response_data) 
+        self.assertEqual(len(response_data["adventures"]), 3)
+
+
+    def test_successful_csv_import_optional_columns_missing(self):
+        """
+        Test CSV import where optional columns (location, description, category) are entirely missing from headers.
+        """
+        csv_data = (
+            "date,name\n"
+            "2023-05-01,Minimal CSV 1\n"
+            "2023-05-02,Minimal CSV 2\n"
+        )
+        response = self.client.post(
+            self.import_url, data=csv_data, content_type="text/csv"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+
+        self.assertEqual(Adventure.objects.count(), 2)
+        adventures = Adventure.objects.filter(collection__user_id=self.user).order_by('name')
+        self.assertEqual(adventures[0].name, "Minimal CSV 1")
+        self.assertIsNone(adventures[0].location)
+        self.assertIsNone(adventures[0].description)
+        self.assertIsNone(adventures[0].category)
+        
+        self.assertEqual(Visit.objects.count(), 2)
+
+
+    def test_successful_csv_import_case_insensitive_headers(self):
+        """
+        Test CSV import with case-insensitive headers.
+        """
+        csv_data = (
+            "Date,Name,LOCATION,DescriptioN,CateGorY\n"
+            "2023-06-01,Case Test Adv,Case Location,Case Desc,Case Cat\n"
+        )
+        response = self.client.post(
+            self.import_url, data=csv_data, content_type="text/csv"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(Adventure.objects.count(), 1)
+        adventure = Adventure.objects.first()
+        self.assertEqual(adventure.name, "Case Test Adv")
+        self.assertEqual(adventure.location, "Case Location")
+        self.assertEqual(adventure.description, "Case Desc")
+        self.assertEqual(adventure.category.name, "Case Cat")
+
+
+    def test_csv_import_missing_required_headers(self):
+        """
+        Test CSV import missing a required header (e.g., 'name').
+        """
+        # Missing 'name' header
+        csv_data_no_name = "date,location\n2023-07-01,Some Location\n"
+        response = self.client.post(
+            self.import_url, data=csv_data_no_name, content_type="text/csv"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("CSV is missing required headers", response.json().get("error", ""))
+        self.assertIn("name", response.json().get("error", ""))
+
+        # Missing 'date' header
+        csv_data_no_date = "name,location\nMy Adventure,Some Location\n"
+        response = self.client.post(
+            self.import_url, data=csv_data_no_date, content_type="text/csv"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("CSV is missing required headers", response.json().get("error", ""))
+        self.assertIn("date", response.json().get("error", ""))
+
+
+    def test_csv_import_empty_csv(self):
+        """
+        Test CSV import with an empty CSV (only headers).
+        """
+        csv_data_headers_only = "date,name,location,description,category\n"
+        response = self.client.post(
+            self.import_url, data=csv_data_headers_only, content_type="text/csv"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json().get("error"), "No activities provided or data is empty.")
+
+        # Test with completely empty string
+        csv_data_empty_string = ""
+        response = self.client.post(
+            self.import_url, data=csv_data_empty_string, content_type="text/csv"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # This case might lead to "CSV is missing required headers" if DictReader gets empty fieldnames
+        # or specific csv.Error "No columns to parse from file"
+        # Based on current view code, it will be caught by `except csv.Error` or `except UnicodeDecodeError`
+        # or the initial check for required headers might fail if fieldnames is None or empty.
+        # If reader.fieldnames is None (for empty string), `set(reader.fieldnames or [])` becomes `set([])`.
+        # `required_headers.issubset(set([]))` is false. So "CSV is missing required headers" is expected.
+        self.assertIn("CSV is missing required headers", response.json().get("error", ""))
+
+
+    def test_csv_import_malformed_csv(self):
+        """
+        Test CSV import with a malformed CSV structure.
+        DictReader is quite robust; this tests a simple case of unescaped quote.
+        """
+        # Unescaped quote in a field
+        csv_data = 'date,name\n2023-08-01,Adventure with " quote\n'
+        response = self.client.post(
+            self.import_url, data=csv_data, content_type="text/csv"
+        )
+        # This should be caught by csv.Error during parsing by DictReader
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("CSV parsing error", response.json().get("error", ""))
+
+
+    def test_csv_import_row_missing_required_data(self):
+        """
+        Test CSV import where a row is missing required data (name or date),
+        expecting the row to be skipped.
+        """
+        csv_data = (
+            "date,name,location\n"
+            "2023-09-01,Valid Row 1,Location1\n"
+            ",Missing Date Row,Location2\n"        # Date is missing
+            "2023-09-03,,Location3\n"              # Name is missing
+            "2023-09-04,Valid Row 2,Location4\n"
+            ",,\n"                                 # Name and Date missing
+        )
+        response = self.client.post(
+            self.import_url, data=csv_data, content_type="text/csv"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        
+        # Only the two valid rows should result in Adventures
+        self.assertEqual(Adventure.objects.count(), 2)
+        self.assertTrue(Adventure.objects.filter(name="Valid Row 1").exists())
+        self.assertTrue(Adventure.objects.filter(name="Valid Row 2").exists())
+        self.assertEqual(Visit.objects.count(), 2)
+
+
+    def test_csv_import_invalid_date_format_in_row(self):
+        """
+        Test CSV import where a row contains an invalid date format.
+        """
+        csv_data = (
+            "date,name\n"
+            "01-10-2023,Bad Date Adv\n" # DD-MM-YYYY format
+            "2023-10-02,Good Date Adv\n"
+        )
+        response = self.client.post(
+            self.import_url, data=csv_data, content_type="text/csv"
+        )
+        # The view catches ValueError from strptime and returns 400
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Data validation error", response.json().get("error", ""))
+        self.assertIn("does not match format '%Y-%m-%d'", response.json().get("error", ""))
+        
+        # Ensure no data was committed due to the error in transaction.atomic block
+        self.assertEqual(Collection.objects.count(), 0)
+        self.assertEqual(Adventure.objects.count(), 0)
+
+    def test_unsupported_media_type_for_import(self):
+        """
+        Test import with an unsupported media type.
+        """
+        response = self.client.post(
+            self.import_url, data="some data", content_type="application/xml"
+        )
+        self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+        self.assertEqual(response.json().get("error"), "Unsupported media type. Please use 'application/json' or 'text/csv'.")

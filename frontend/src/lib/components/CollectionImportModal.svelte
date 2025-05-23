@@ -1,44 +1,22 @@
-<script lang="ts">
+<script>
   import { createEventDispatcher } from 'svelte';
-	import { onMount } from 'svelte';
 
   const dispatch = createEventDispatcher();
 
   let showModal = false;
   let jsonData = '';
   let errorMessage = '';
-  let selectedFile = null;
-
-  let modal: HTMLDialogElement;
-
-	console.log('Entering CollectionImportModal');
-
-	onMount(async () => {
-  	console.log('Entering onMount');
-		modal = document.getElementById('my_modal_1') as HTMLDialogElement;
-		if (modal) {
-			modal.showModal();
-
-      showModal = true;
-      jsonData = '';
-      errorMessage = '';
-      selectedFile = null;
-      // Reset file input if it exists
-      const fileInput = document.getElementById('jsonFile');
-      if (fileInput) {
-        fileInput.value = '';
-      }
-		}
-	});
+  let selectedFile = null; // Holds the File object
+  let selectedFileType = ''; // 'json', 'csv', or ''
 
   export function openModal() {
-  	console.log('Entering openModal');
     showModal = true;
     jsonData = '';
     errorMessage = '';
     selectedFile = null;
+    selectedFileType = '';
     // Reset file input if it exists
-    const fileInput = document.getElementById('jsonFile');
+    const fileInput = document.getElementById('importFile');
     if (fileInput) {
       fileInput.value = '';
     }
@@ -51,46 +29,70 @@
   function handleFileSelect(event) {
     const files = event.target.files;
     if (files.length > 0) {
-      selectedFile = files[0];
+      const file = files[0];
+      if (file.name.endsWith('.json') || file.type === 'application/json') {
+        selectedFile = file;
+        selectedFileType = 'json';
+        errorMessage = '';
+      } else if (file.name.endsWith('.csv') || file.type === 'text/csv') {
+        selectedFile = file;
+        selectedFileType = 'csv';
+        errorMessage = '';
+      } else {
+        selectedFile = null;
+        selectedFileType = '';
+        errorMessage = 'Invalid file type. Please select a JSON or CSV file.';
+      }
       jsonData = ''; // Clear textarea if file is selected
-      errorMessage = '';
     } else {
       selectedFile = null;
+      selectedFileType = '';
     }
   }
 
   async function handleImport() {
     errorMessage = '';
-    let dataToParse = jsonData;
 
     if (selectedFile) {
       try {
-        dataToParse = await selectedFile.text();
+        const fileContent = await selectedFile.text();
+        if (selectedFileType === 'json') {
+          const parsedData = JSON.parse(fileContent);
+          dispatch('import', { type: 'json', data: parsedData });
+          closeModal();
+        } else if (selectedFileType === 'csv') {
+          dispatch('import', { type: 'csv', data: fileContent });
+          closeModal();
+        } else {
+          // This case should ideally be caught by handleFileSelect, but as a safeguard:
+          errorMessage = 'Invalid file type selected. Please select JSON or CSV.';
+          return;
+        }
       } catch (error) {
-        errorMessage = 'Error reading file: ' + error.message;
+        if (selectedFileType === 'json') {
+          errorMessage = 'Error parsing JSON file: ' + error.message;
+        } else {
+          errorMessage = 'Error reading file: ' + error.message;
+        }
         return;
       }
-    }
-
-    if (!dataToParse.trim()) {
-      errorMessage = 'No data to import. Please select a file or paste JSON.';
-      return;
-    }
-
-    try {
-      const parsedData = JSON.parse(dataToParse);
-      dispatch('import', parsedData);
-      closeModal();
-    } catch (error) {
-      errorMessage = 'Invalid JSON data: ' + error.message;
+    } else { // Textarea input (JSON only)
+      if (!jsonData.trim()) {
+        errorMessage = 'No data to import. Please select a file or paste JSON content.';
+        return;
+      }
+      try {
+        const parsedData = JSON.parse(jsonData);
+        dispatch('import', { type: 'json', data: parsedData });
+        closeModal();
+      } catch (error) {
+        errorMessage = 'Invalid JSON data in textarea: ' + error.message;
+      }
     }
   }
 </script>
 
-<!-- {#if showModal} -->
-<dialog id="my_modal_1" class="modal">
-	<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-	<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+{#if showModal}
   <div
     class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 transition-opacity duration-300 ease-in-out"
     class:opacity-100={showModal}
@@ -109,11 +111,11 @@
       </div>
       
       <div class="mb-4">
-        <label for="jsonFile" class="block text-sm font-medium text-gray-700 mb-1">Upload JSON File (Optional)</label>
+        <label for="importFile" class="block text-sm font-medium text-gray-700 mb-1">Upload JSON or CSV File</label>
         <input
           type="file"
-          id="jsonFile"
-          accept=".json"
+          id="importFile"
+          accept=".json,.csv,application/json,text/csv"
           on:change={handleFileSelect}
           class="w-full text-sm text-gray-500
                  file:mr-4 file:py-2 file:px-4
@@ -133,8 +135,8 @@
           bind:value={jsonData}
           rows="8"
           class="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Paste JSON data here..."
-          on:input={() => { selectedFile = null; errorMessage = ''; }}
+          placeholder="Paste JSON content here. For CSV, please use the file upload option."
+          on:input={() => { selectedFile = null; selectedFileType = ''; errorMessage = ''; }}
         ></textarea>
       </div>
 
@@ -158,8 +160,7 @@
       </div>
     </div>
   </div>
-<!-- {/if} -->
-</dialog>
+{/if}
 
 <style>
   /* Ensure the modal backdrop is correctly layered */
